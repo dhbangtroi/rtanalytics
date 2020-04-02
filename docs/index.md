@@ -1,0 +1,1 @@
+Pinka is beautiful!
