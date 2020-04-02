@@ -1,0 +1,289 @@
+---
+title: "NL Covid-19"
+author: "Thien Dao"
+date:  "Report created at `r format(Sys.time(), '%Y-%m-%d %H:%M')`"
+output: html_document
+---
+
+```{r setup, include = FALSE}
+
+knitr::opts_chunk$set(echo = F, comment = NA, warning = F, message = F)
+
+packages <- c('dplyr', 'tidyr', 'stringr', 'lubridate', 
+              'DT', 'data.table', 
+              'rvest', 'xml2', 'httr',
+              'plotly')
+
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
+
+sys_user <- Sys.info()["user"]
+switch(sys_user,
+       "PinkaVivo" = {
+         file_path <- 'E:\\THIENDHB_GOOGLEDRIVE\\PERSONAL\\R-Projects\\Covid19\\rawdata\\'
+       },
+       "root" = {
+         file_path <- paste0('../output/')  
+       },
+       {
+         file_path <- paste0(getwd(),'/')
+       }
+)
+
+```
+
+``` {r handle-current-data}
+
+##########################
+# GET HTML TABLE
+##########################
+
+url <- "https://www.rivm.nl/actuele-informatie-over-coronavirus"
+uastring <- "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"
+session <- html_session(url, user_agent(uastring))
+
+html_content <- read_html(session)
+
+html_data <- html_content %>% 
+  html_node('#csvData') 
+
+html_date <- html_content %>%
+  html_nodes('.content-date-edited') %>%
+  html_text() %>%
+  str_replace('Wijzigingsdatum ', '') %>%
+  str_replace(' \\| ', ' ')
+
+datetime <- format(dmy_hm(html_date), '%Y-%m-%d %H:%M')
+
+date <- format(dmy_hm(html_date), '%Y-%m-%d')
+
+raw_data <- html_text(html_data) %>% 
+  strsplit(split = '\n') %>% 
+  unlist() %>%
+  as.data.frame(stringsAsFactors = F) %>%
+  slice(2:n())
+
+names(raw_data) <- 'data'
+new_cols <- as.character(raw_data[1,]) %>%
+  strsplit(split = ';') %>% 
+  unlist()
+
+data <- raw_data %>%
+  slice(2:n()) %>%
+  separate(col = 'data', into = new_cols, sep = ';')
+
+names(data) <- c('muniid', 'municipality', 'hosp_number', 'population', 'hosp_number_per_inhabitants')
+
+data <- data %>%
+  mutate(hosp_number = as.numeric(hosp_number),
+         population = as.numeric(population),
+         hosp_number_per_inhabitants = as.numeric(hosp_number_per_inhabitants),
+         date = as.character(date))
+
+column_labels <- c('Municipality ID', 'Municipality', 'Number of hospitalized patients', 'Population', 'Number of hospitalized patients per 100,000 inhabitants', 'Date')
+
+write.csv(data, 
+          file = paste0(file_path, 
+                        'NL-',
+                        format(dmy_hm(html_date), '%Y%m%d'), 
+                        '.csv'),
+          row.names = F)
+
+```
+
+``` {r handle-history-data, include = F}
+
+## Backup history file
+file.copy(from = paste0(file_path, 'NL-full.csv'),
+          to = paste0(file_path, 'bak/NL-history_', format(ymd(date), '%Y%m%d'),'.csv'))
+
+## Read history file
+history <- read.csv(file = paste0(file_path, 'NL-full.csv'), 
+                    stringsAsFactors = F)
+history <- history %>%
+  mutate(muniid = as.character(muniid))
+
+## Adjust current file
+today <- data %>%
+  mutate(uuid = paste0(muniid, '-', format(ymd(date), '%Y%m%d'))) %>%
+  select(uuid, everything())
+
+## Update full file
+full <- bind_rows(history, today)
+
+full <- full %>% 
+  mutate(municipality = trimws(municipality, which = "both")) %>%
+  mutate(municipality = case_when(
+     muniid == '1740' ~ 'Neder-Betuwe',
+ muniid == '1884' ~ 'Kaag en Braassem',
+ muniid == '1894' ~ 'Peel en Maas',
+ muniid == '1945' ~ 'Berg en Dal',
+ muniid == '1952' ~ 'Midden-Groningen',
+ muniid == '214' ~ 'Buren',
+ muniid == '226' ~ 'Duiven',
+ muniid == '273' ~ 'Putten',
+ muniid == '498' ~ 'Drechterland',
+ muniid == '518' ~ 's-Gravenhage',
+ muniid == '59' ~ 'Achtkarspelen',
+ muniid == '668' ~ 'West Maas en Waal',
+ muniid == '677' ~ 'Hulst',
+ muniid == '736' ~ 'De Ronde Venen',
+ muniid == '784' ~ 'Gilze en Rijen',
+ muniid == '815' ~ 'Mill en Sint Hubert',
+ muniid == '820' ~ 'Nuenen, Gerwen en Nederwetten',
+ muniid == '848' ~ 'Son en Breugel',
+ muniid == '888' ~ 'Beek',
+ muniid == '944' ~ 'Mook en Middelaar',
+ muniid == '965' ~ 'Simpelveld',
+ TRUE ~ municipality
+  )
+  )
+
+write.csv(full, 
+          file = paste0(file_path, 
+                        'NL-full.csv'),
+          row.names = F)
+
+## muniid = 1740 -> 'Neder-Betuwe' -> 31-03
+## 1884 -> 'Kaag en Braassem' -> 31-03 and 01-04
+## 1894 -> 'Peel en Maas' -> 31-03 and 01-04
+## 1945 -> 'Berg en Dal' -> 01-04
+## 1952 -> 'Midden-Groningen' -> 31-03 and 01-04
+## 214 -> 'Buren' -> 31-03 and 01-04
+## 226 -> 'Duiven' -> 31-03 and 01-04
+## 273 -> 'Putten' -> 31-03 and 01-04
+## 498 -> 'Drechterland' -> 31-03 and 01-04
+## 518 -> 's-Gravenhage' -> 31-03 and 01-04
+## 59 -> 'Achtkarspelen' -> 31-03 and 01-04
+## 668 -> 'West Maas en Waal' -> 31-03 and 01-04
+## 677 -> 'Hulst' -> 31-03 and 01-04
+## 736 -> 'De Ronde Venen' -> 31-03 and 01-04
+## 784 -> 'Gilze en Rijen' -> 31-03 and 01-04
+## 815 -> 'Mill en Sint Hubert' -> 31-03 and 01-04
+## 820 -> 'Nuenen, Gerwen en Nederwetten' -> 31-03 and 01-04
+## 848 -> 'Son en Breugel' -> 31-03 and 01-04
+## 888 -> 'Beek' -> 31-03 and 01-04
+## 944 -> 'Mook en Middelaar' -> 31-03 and 01-04
+## 965 -> 'Simpelveld' -> 31-03 and 01-04
+
+```
+
+#### Data updated to `r datetime` {.tabset}
+
+##### Today {.tabset}
+
+###### Overview
+
+``` {r visualize-current-data, results = 'asis', echo = F}
+
+top30 <- data %>%
+  arrange(desc(hosp_number)) %>%
+  slice(1:30)
+
+p <- plot_ly(top30, 
+             y = ~municipality,
+             x = ~hosp_number,
+             type = 'bar', orientation = 'h',
+             height = '800',
+             text = ~hosp_number,
+             textposition = 'outside'
+             ) %>%
+  layout(title = 'Number of hospitalized patients \n Top 30 municipalities',
+         xaxis = list(title = '',
+                      showgrid = F, 
+                      showticklabels = F
+                      ),
+         yaxis = list(title = '',
+                      showgrid = F,
+                      categoryorder = 'total ascending'
+                      ),
+         margin = list(pad = 10, t = 110)
+         )
+
+p
+
+```
+
+``` {r visualize2-current-data, results = 'asis', echo = F}
+
+top30a <- data %>%
+  arrange(desc(hosp_number_per_inhabitants)) %>%
+  slice(1:30)
+
+p2 <- plot_ly(top30a, 
+             y = ~municipality,
+             x = ~hosp_number_per_inhabitants,
+             type = 'bar', orientation = 'h',
+             height = '800',
+             text = ~hosp_number_per_inhabitants,
+             textposition = 'outside',
+             marker = list(color = '#009688')
+             ) %>%
+  layout(title = 'Number of hospitalized patients per 100.000 inhabitants \n Top 30 municipalities',
+         xaxis = list(title = '',
+                      showgrid = F, 
+                      showticklabels = F
+                      ),
+         yaxis = list(title = '',
+                      showgrid = F,
+                      categoryorder = 'total ascending'
+                      ),
+         margin = list(pad = 10, t = 110)
+         )
+
+p2
+
+```
+
+###### Details
+
+``` {r table-current-data, results = 'asis', echo = F}
+
+datatable(data, colnames = column_labels, rownames = F,
+          options = list(dom = 'lftip'))
+
+```
+
+##### Time series {.tabset}
+
+###### Overview
+
+``` {r visualize-history-data, results = 'asis', echo = F}
+
+unique_dates <- unique(full$date)
+
+top10 <- data %>%
+  arrange(desc(hosp_number)) %>%
+  slice(1:10)
+
+df10 <- full %>%
+  mutate(municipality = trimws(municipality, which = "both")) %>%
+  filter(muniid %in% top10$muniid) %>%
+  arrange(desc(hosp_number), date) 
+
+p3 <- df10 %>%
+  group_by(muniid) %>%
+  plot_ly(x = ~date) %>%
+  add_lines(y = ~hosp_number,
+            color = ~factor(municipality)) %>%
+  layout(title = 'Number of hospitalized patients through time',
+         xaxis = list(title = ''),
+         yaxis = list(title = ''))
+
+p3
+
+```
+
+###### Details
+
+``` {r table-full-data, results = 'asis', echo = F}
+
+datatable(full[,2:ncol(full)], colnames = column_labels, rownames = F,
+          options = list(dom = 'lftip'))
+
+```
