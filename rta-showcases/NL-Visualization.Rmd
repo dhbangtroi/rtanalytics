@@ -2,17 +2,21 @@
 title: "NL Covid-19"
 author: "Thien Dao"
 date:  "Report created at `r format(Sys.time(), '%Y-%m-%d %H:%M')`"
-output: html_document
+output: 
+  html_document:
+    keep_md: true
 ---
 
 ```{r setup, include = FALSE}
 
 knitr::opts_chunk$set(echo = F, comment = NA, warning = F, message = F)
 
+options(scipen = 999)
+
 packages <- c('dplyr', 'tidyr', 'stringr', 'lubridate', 
               'DT', 'data.table', 
               'rvest', 'xml2', 'httr',
-              'plotly')
+              'plotly', 'webshot')
 
 installed_packages <- packages %in% rownames(installed.packages())
 if (any(installed_packages == FALSE)) {
@@ -49,9 +53,7 @@ session <- html_session(url, user_agent(uastring))
 
 html_content <- read_html(session)
 
-html_data <- html_content %>% 
-  html_node('#csvData') 
-
+# Get date
 html_date <- html_content %>%
   html_nodes('.content-date-edited') %>%
   html_text() %>%
@@ -61,6 +63,40 @@ html_date <- html_content %>%
 datetime <- format(dmy_hm(html_date), '%Y-%m-%d %H:%M')
 
 date <- format(dmy_hm(html_date), '%Y-%m-%d')
+
+# Get total number
+html_daily <- html_content %>%
+  html_nodes('table') %>%
+  html_table(fill = T) %>%
+  as.data.frame()
+
+tbl <- html_daily %>%
+  slice(2)
+
+tbl <- setNames(tbl, c("number", "hosp_number", "death_number"))
+
+tbl_lb <- c("Test positive", "Hospitalized", "Deceased")
+
+tbl <- tbl %>%
+  mutate(number = str_remove_all(number, "\\*|\\."),
+         hosp_number = str_remove_all(hosp_number, "\\*|\\."),
+         death_number = str_remove_all(death_number, "\\*|\\."))
+
+tbl[] <- lapply(tbl, as.numeric)
+
+tbl <- tbl %>%
+  mutate(date = as.character(date))
+
+write.csv(tbl, 
+          file = paste0(file_path, 
+                        'NL-daily-',
+                        format(dmy_hm(html_date), '%Y%m%d'), 
+                        '.csv'),
+          row.names = F)
+
+# Get number by provinces
+html_data <- html_content %>% 
+  html_node('#csvData') 
 
 raw_data <- html_text(html_data) %>% 
   strsplit(split = '\n') %>% 
@@ -96,7 +132,27 @@ write.csv(data,
 
 ```
 
-``` {r handle-history-data, include = F}
+```{r handle-daily-history, include = F}
+
+## Backup history file
+file.copy(from = paste0(file_path, 'NL-daily.csv'),
+          to = paste0(file_path, 'bak/NL-daily-history_', format(ymd(date), '%Y%m%d'),'.csv'))
+
+## Read history file
+daily_history <- read.csv(file = paste0(file_path, 'NL-daily.csv'),
+                  stringsAsFactors = F)
+
+## Update full file
+daily <- bind_rows(daily_history, tbl)
+
+write.csv(daily, 
+          file = paste0(file_path, 
+                        'NL-daily.csv'),
+          row.names = F)
+
+```
+
+``` {r handle-hosp-history, include = F}
 
 ## Backup history file
 file.copy(from = paste0(file_path, 'NL-full.csv'),
@@ -179,6 +235,10 @@ write.csv(full,
 
 ###### Overview
 
+<p align = "center"><big>Total tested positive: <font color = #27aee1><b><big>`r tbl$number`</big></b></font></big><br>
+<big>Total hospitalized: <font color = #900c3f><b><big>`r tbl$hosp_number`</big></b></font></big><br>
+<big>Total deceased: <font color = #ff9800><b><big>`r tbl$death_number`</big></b></font></big></p>
+
 ``` {r visualize-current-data, results = 'asis', echo = F}
 
 top30 <- data %>%
@@ -251,29 +311,58 @@ datatable(data, colnames = column_labels, rownames = F,
 
 ##### Time series {.tabset}
 
-###### Overview
+###### Daily
 
-``` {r visualize-history-data, results = 'asis', echo = F}
+``` {r visualize-daily, results = 'asis', echo = F}
 
-unique_dates <- unique(full$date)
+p3 <- daily %>%
+  plot_ly(type = 'scatter', mode = 'lines',
+          x = ~date, 
+          y = ~number, name = 'Tested positive') %>%
+  add_trace(y = ~hosp_number, name = 'Hospitalized', line = list(color = '#900c3f')) %>%
+  add_trace(y = ~death_number, name = 'Dead', line = list(color = '#ff9800')) %>%
+  layout(title = 'Number of Covid-19 patients through time',
+         xaxis = list(title = '', showgrid = T),
+         yaxis = list(title = '', showgrid = T)
+  )
+
+p3
+
+```
+
+###### Municipalities
+
+``` {r visualize-hosp-muni, results = 'asis', echo = F}
 
 top10 <- data %>%
   arrange(desc(hosp_number)) %>%
-  slice(1:10)
+  slice(1:10) %>%
+  mutate(n = 1:10)
 
 df10 <- full %>%
   mutate(municipality = trimws(municipality, which = "both")) %>%
   filter(muniid %in% top10$muniid) %>%
   arrange(desc(hosp_number), date) 
 
+df10 <- left_join(df10, select(top10, muniid, n), 
+                           by = "muniid")
+
 p3 <- df10 %>%
-  group_by(muniid) %>%
-  plot_ly(x = ~date) %>%
-  add_lines(y = ~hosp_number,
-            color = ~factor(municipality)) %>%
-  layout(title = 'Number of hospitalized patients through time',
+  # group_by(muniid) %>%
+  # plot_ly(x = ~date) %>%
+  # add_lines(y = ~hosp_number,
+  #           color = ~factor(municipality)) %>%
+  # layout(title = 'Number of hospitalized patients through time',
+  #        xaxis = list(title = ''),
+  #        yaxis = list(title = ''))
+  arrange(desc(date), desc(hosp_number)) %>%
+  plot_ly(x = ~date, y = ~hosp_number,
+          type = 'scatter', mode = 'none', stackgroup = 'one',  
+          fillcolor = ~factor(paste0(municipality, ' (', n, ')')), height = 700) %>%
+  layout(title = 'Number of hospitalized patients through time \n Top 10 municipalities',
          xaxis = list(title = ''),
-         yaxis = list(title = ''))
+         yaxis = list(title = '')
+  )
 
 p3
 
