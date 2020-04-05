@@ -143,6 +143,9 @@ daily_history <- read.csv(file = paste0(file_path, 'NL-daily.csv'),
                   stringsAsFactors = F)
 
 ## Update full file
+daily_history <- daily_history %>%
+  filter(!date %in% tbl$date)
+
 daily <- bind_rows(daily_history, tbl)
 
 write.csv(daily, 
@@ -170,6 +173,9 @@ today <- data %>%
   select(uuid, everything())
 
 ## Update full file
+history <- history %>%
+  filter(!date %in% today$date)
+
 full <- bind_rows(history, today)
 
 full <- full %>% 
